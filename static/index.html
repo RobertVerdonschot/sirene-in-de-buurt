@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Sirene in de buurt</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta name="theme-color" content="#0f172a">
+<style>
+  :root {
+    --bg: #f1f5f9; --card: #ffffff; --text: #0f172a; --muted: #64748b;
+    --line: #e2e8f0; --accent: #0e7490;
+    --brandweer: #dc2626; --ambulance: #b45309; --politie: #1d4ed8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f172a; --card: #1e293b; --text: #f1f5f9; --muted: #94a3b8;
+      --line: #334155; --accent: #22d3ee;
+      --brandweer: #f87171; --ambulance: #fbbf24; --politie: #60a5fa;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: max(16px, env(safe-area-inset-top)) 16px 32px;
+  }
+  main { max-width: 520px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 4px 0 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  h1 img { width: 34px; height: 34px; }
+  .card {
+    background: var(--card); border-radius: 16px; padding: 18px;
+    margin-bottom: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.08);
+  }
+  .top { display: flex; justify-content: space-between; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; }
+  .svc { font-weight: 700; color: var(--c); }
+  .tag { background: var(--c, var(--accent)); color: var(--card); border-radius: 999px; padding: 1px 9px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .tag.off { background: var(--muted); }
+  .head { display: flex; gap: 12px; align-items: center; margin: 8px 0 14px; }
+  .head img { width: 52px; height: 52px; flex: none; }
+  .what { font-size: 22px; font-weight: 700; overflow-wrap: anywhere; line-height: 1.2; }
+  .sub { color: var(--muted); font-size: 14px; margin-top: 2px; }
+  dl { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; margin: 0; }
+  .f { display: flex; gap: 10px; align-items: flex-start; min-width: 0; }
+  .f img { width: 30px; height: 30px; flex: none; margin-top: 4px; }
+  .f.wide { grid-column: 1 / -1; }
+  dt { color: var(--muted); font-size: 13px; }
+  dd { margin: 0; font-size: 18px; font-weight: 600; overflow-wrap: anywhere; }
+  dd .muted { color: var(--muted); font-weight: 500; font-size: 15px; }
+  .msg { text-align: center; color: var(--muted); padding: 40px 12px; }
+  .msg img { width: 88px; height: 88px; display: block; margin: 0 auto 12px; }
+  .msg strong { display: block; color: var(--text); font-size: 18px; margin-bottom: 6px; }
+  .note { color: var(--muted); font-size: 13px; text-align: center; margin: -4px 0 14px; }
+  footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 18px; }
+  footer a { color: inherit; }
+  button {
+    font: inherit; background: var(--accent); color: var(--card); border: 0;
+    border-radius: 10px; padding: 10px 18px; margin-top: 14px; font-weight: 600;
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1><img src="/icons/police-siren.webp" alt="">Sirene in de buurt</h1>
+  <div id="content"><div class="card msg"><img src="/icons/location-pin.webp" alt=""><strong>Even je locatie zoeken...</strong></div></div>
+  <footer id="footer"></footer>
+</main>
+<script>
+const REFRESH_MS = 15000;
+const content = document.getElementById('content');
+const footer = document.getElementById('footer');
+let position = null;
+let timer = null;
+
+const SERVICES = {
+  brandweer: {name: 'Brandweer', icon: 'fire-truck'},
+  ambulance: {name: 'Ambulance', icon: 'ambulance'},
+  politie: {name: 'Politie', icon: 'police-car'},
+};
+const SIREN = {ja: 'Ja', soms: 'Soms', nee: 'Nee', onbekend: 'Onbekend'};
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const num = n => n.toLocaleString('nl-NL');
+const km = m => m < 1000 ? `${num(Math.round(m / 10) * 10)} m` : `${(m / 1000).toLocaleString('nl-NL', {maximumFractionDigits: 1})} km`;
+const clock = t => new Date(t * 1000).toLocaleTimeString('nl-NL', {hour: '2-digit', minute: '2-digit'});
+
+function ago(t) {
+  const min = Math.floor((Date.now() / 1000 - t) / 60);
+  if (min < 1) return 'zojuist';
+  return `${min} min geleden`;
+}
+
+const icon = name => `<img src="/icons/${name}.webp" alt="">`;
+
+function message(title, text, withButton, iconName) {
+  content.innerHTML = `<div class="card msg">${iconName ? icon(iconName) : ''}<strong>${esc(title)}</strong>${esc(text)}` +
+    (withButton ? `<br><button onclick="refresh()">Opnieuw</button>` : '') + `</div>`;
+}
+
+function field(iconName, label, valueHtml, wide) {
+  return `<div class="f${wide ? ' wide' : ''}">${icon(iconName)}<div><dt>${label}</dt><dd>${valueHtml}</dd></div></div>`;
+}
+
+function where(i) {
+  if (i.precision === 'street') return esc(i.street) + (i.place ? `<span class="muted">, ${esc(i.place)}</span>` : '');
+  if (i.precision === 'road') return esc(i.street) + (i.place ? `<span class="muted">, bij ${esc(i.place)}</span>` : '');
+  if (i.place) return `${esc(i.place)} <span class="muted">(straat onbekend)</span>`;
+  return 'Onbekend';
+}
+
+function distance(i) {
+  if (i.distance_m == null) return 'Onbekend';
+  if (!i.direction) return `${km(i.distance_m)} <span class="muted">vlakbij</span>`;
+  return `${km(i.distance_m)} <span class="muted">${esc(i.direction)}</span>`;
+}
+
+function card(i) {
+  const s = SERVICES[i.service];
+  const code = i.code && i.service === 'ambulance' ? ` (${esc(i.code)})` : '';  // bij de rest staat prio al in de tekst
+  // Zonder soort melding (bij ambulance meestal) wordt de spoed de titel.
+  const head = i.what
+    ? `<div class="what">${esc(i.what)}</div><div class="sub">${esc(i.urgency)}${code}</div>`
+    : `<div class="what">${esc(i.urgency)}</div><div class="sub">Soort melding niet vermeld${code}</div>`;
+  const tag = i.cancelled
+    ? `<span class="tag off">Ingetrokken</span>`
+    : `<span class="tag">${esc(ago(i.time))}</span>`;
+  return `<div class="card" style="--c: var(--${i.service})">
+    <div class="top"><span class="svc">${s.name}</span>${tag}</div>
+    <div class="head">${icon(s.icon)}<div>${head}</div></div>
+    <dl>
+      ${field('location-pin', 'Waar', where(i), true)}
+      ${field('compass', 'Afstand', distance(i))}
+      ${field('stopwatch', 'Gemeld', `${clock(i.time)} <span class="muted">${i.cancelled ? esc(ago(i.time)) : ''}</span>`)}
+      ${field('police-siren', 'Zwaailicht en sirene', SIREN[i.siren] || 'Onbekend', true)}
+    </dl>
+  </div>`;
+}
+
+async function refresh() {
+  if (!position) return;
+  const {latitude, longitude} = position.coords;
+  try {
+    const r = await fetch(`/api/incidents?lat=${latitude.toFixed(4)}&lon=${longitude.toFixed(4)}`);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Er ging iets mis.');
+    const radius = km(data.radius_m || 3000);
+    if (data.outside_nl) {
+      message('Alleen in Nederland', `Er ligt geen Nederlandse gemeente binnen ${radius} van je.`, false, 'location-pin');
+    } else if (data.incidents.length) {
+      const partial = data.partial ? '<div class="note">Niet alle meldingen konden worden opgehaald; er kan iets ontbreken.</div>' : '';
+      content.innerHTML = partial + data.incidents.map(card).join('');
+    } else {
+      message('Rustig in de buurt', `Geen spoedmeldingen binnen ${radius} in het afgelopen uur.` +
+        (data.partial ? ' Let op: niet alle meldingen konden worden opgehaald.' : ''), false, 'house');
+    }
+    const places = data.gemeenten && data.gemeenten.length ? ` &middot; gemeenten: ${data.gemeenten.map(esc).join(', ')}` : '';
+    footer.innerHTML = `Bijgewerkt ${new Date().toLocaleTimeString('nl-NL')} &middot; spoedmeldingen binnen ${radius}, afgelopen uur${places}<br>` +
+      `meldingen: <a href="https://112-nu.nl" target="_blank">112-nu.nl</a> &middot; plaatsen: PDOK &middot; icoontjes: <a href="https://www.thiings.co" target="_blank" rel="noopener">thiings.co</a><br>` +
+      `Niet voor noodgevallen: bel 112.`;
+  } catch (e) {
+    message('Lukt even niet', e.message || 'Geen verbinding.', true, 'warning-sign');
+  }
+}
+
+function start() {
+  if (!navigator.geolocation) {
+    message('Geen locatie', 'Je browser geeft geen locatie door.');
+    return;
+  }
+  navigator.geolocation.watchPosition(
+    pos => { const first = !position; position = pos; if (first) refresh(); },
+    err => message('Geen locatie',
+      err.code === 1 ? 'Geef de app toestemming voor je locatie (instellingen van je browser).' : 'Locatie niet gevonden.', true, 'location-pin'),
+    {enableHighAccuracy: false, maximumAge: 30000, timeout: 20000}
+  );
+  clearInterval(timer);
+  timer = setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+}
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+start();
+</script>
+</body>
+</html>
